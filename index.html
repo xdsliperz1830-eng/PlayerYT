@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PlayerYT — YouTube Music Player</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff4d4d'/%3E%3Cpath d='M13 10l9 6-9 6z' fill='white'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://i.ytimg.com" />
+<link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">▶</span>
+        <h1>PlayerYT</h1>
+      </div>
+
+      <form class="add-form" id="add-form" autocomplete="off">
+        <input
+          id="add-input"
+          type="text"
+          placeholder="Paste a YouTube link or ID — or type words to search"
+          aria-label="Add a track by link, ID, or search terms"
+        />
+        <button type="submit" id="add-button">Add</button>
+      </form>
+
+      <div class="topbar-actions">
+        <button type="button" id="video-toggle" class="icon-button" title="Show/hide video (V)" aria-pressed="false">
+          Video
+        </button>
+        <button type="button" id="settings-toggle" class="icon-button" title="Search settings">
+          Settings
+        </button>
+      </div>
+    </header>
+
+    <section id="settings-panel" class="settings-panel" hidden>
+      <label for="api-key">YouTube Data API key (optional — enables searching by words)</label>
+      <div class="settings-row">
+        <input id="api-key" type="password" placeholder="AIza…" spellcheck="false" />
+        <button type="button" id="api-key-save">Save</button>
+        <button type="button" id="api-key-clear" class="ghost">Clear</button>
+      </div>
+      <p class="hint">
+        The key is stored only in this browser's local storage and is sent directly to
+        <code>googleapis.com</code>. Without a key you can still add tracks by pasting
+        video, playlist, or share links.
+      </p>
+    </section>
+
+    <main class="main">
+      <section class="stage">
+        <div class="stage-inner">
+          <div id="video-frame" class="video-frame" data-visible="false">
+            <div id="yt-player"></div>
+          </div>
+
+          <div class="now-playing" id="now-playing">
+            <img id="np-art" class="np-art" alt="" aria-hidden="true" />
+            <div class="np-meta">
+              <p class="np-label">Now playing</p>
+              <h2 id="np-title">Nothing queued yet</h2>
+              <p id="np-author" class="np-author">Add a track to get started</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <div class="seek">
+            <span id="time-current" class="time">0:00</span>
+            <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+            <span id="time-total" class="time">0:00</span>
+          </div>
+
+          <div class="buttons">
+            <button type="button" id="shuffle" class="icon-button toggle" title="Shuffle (S)" aria-pressed="false">Shuffle</button>
+            <button type="button" id="prev" class="round" title="Previous (K)" aria-label="Previous">⏮</button>
+            <button type="button" id="play" class="round primary" title="Play / pause (Space)" aria-label="Play">▶</button>
+            <button type="button" id="next" class="round" title="Next (L)" aria-label="Next">⏭</button>
+            <button type="button" id="repeat" class="icon-button toggle" title="Repeat (R)" aria-pressed="false">Repeat</button>
+          </div>
+
+          <div class="volume">
+            <button type="button" id="mute" class="icon-button" title="Mute (M)" aria-pressed="false">🔊</button>
+            <input id="volume" type="range" min="0" max="100" value="80" aria-label="Volume" />
+          </div>
+        </div>
+      </section>
+
+      <aside class="queue">
+        <div class="queue-head">
+          <h3>Queue <span id="queue-count" class="count">0</span></h3>
+          <button type="button" id="clear-queue" class="ghost small">Clear</button>
+        </div>
+        <ol id="queue-list" class="queue-list" aria-live="polite"></ol>
+        <p id="queue-empty" class="queue-empty">
+          Your queue is empty. Paste a YouTube link above, or add a whole playlist link
+          to import up to 50 tracks.
+        </p>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="status">Ready</span>
+      <span class="shortcuts">Space play · K/L prev-next · S shuffle · R repeat · M mute · V video</span>
+    </footer>
+  </div>
+
+  <template id="queue-item-template">
+    <li class="queue-item" draggable="true">
+      <img class="qi-art" alt="" />
+      <button type="button" class="qi-main">
+        <span class="qi-title"></span>
+        <span class="qi-author"></span>
+      </button>
+      <span class="qi-duration"></span>
+      <button type="button" class="qi-remove" title="Remove" aria-label="Remove from queue">✕</button>
+    </li>
+  </template>
+
+  <script src="src/utils.js"></script>
+  <script src="src/store.js"></script>
+  <script src="src/youtube.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>

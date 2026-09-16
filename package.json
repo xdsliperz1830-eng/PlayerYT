@@ -1,0 +1,11 @@
+{
+  "name": "playeryt",
+  "version": "1.0.0",
+  "description": "A browser music player that streams YouTube videos as a queue.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/utils.test.js"
+  },
+  "license": "MIT"
+}
