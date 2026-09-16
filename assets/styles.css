@@ -33,7 +33,7 @@ button, input { font: inherit; color: inherit; }
   min-height: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 18px 20px 12px;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) 20px calc(12px + env(safe-area-inset-bottom, 0px));
   gap: 16px;
 }
 
@@ -461,7 +461,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 @media (max-width: 480px) {
-  .app { padding: 14px 14px 10px; }
+  .app { padding: calc(14px + env(safe-area-inset-top, 0px)) 14px calc(10px + env(safe-area-inset-bottom, 0px)); }
   .buttons { gap: 8px; }
   .icon-button.toggle { font-size: 13px; padding: 8px 11px; }
   .np-art { height: 72px; width: 72px; }
