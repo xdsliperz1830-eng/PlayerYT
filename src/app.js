@@ -13,6 +13,7 @@
   var seeking = false;
   var ticker = null;
   var statusTimer = null;
+  var wakeLock = null;
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -23,6 +24,7 @@
     bindAddForm();
     bindSettings();
     bindKeyboard();
+    bindWakeLock();
 
     store.subscribe(render);
 
@@ -44,7 +46,7 @@
       'now-playing', 'np-art', 'np-title', 'np-author', 'seek', 'time-current',
       'time-total', 'shuffle', 'prev', 'play', 'next', 'repeat', 'mute', 'volume',
       'queue-list', 'queue-count', 'queue-empty', 'clear-queue', 'status',
-      'queue-item-template'
+      'queue-item-template', 'awake-toggle'
     ].forEach(function (id) {
       el[camel(id)] = document.getElementById(id);
     });
@@ -71,9 +73,11 @@
       startTicker();
       captureLiveMetadata();
       updateMediaSession();
+      holdScreenAwake();
     } else {
       stopTicker();
       updateProgress();
+      if (state !== STATE.BUFFERING) releaseScreen();
     }
 
     if (state === STATE.ENDED) advance(1, true);
@@ -280,6 +284,17 @@
       if (duration) player.seekTo(duration * (el.seek.value / 1000));
     });
 
+    el.awakeToggle.addEventListener('click', function () {
+      store.setKeepAwake(!store.keepAwake);
+      if (store.keepAwake) {
+        holdScreenAwake();
+        setStatus('The screen will stay on while a track plays');
+      } else {
+        releaseScreen();
+        setStatus('The screen can lock normally again');
+      }
+    });
+
     el.videoToggle.addEventListener('click', function () {
       var visible = el.videoFrame.getAttribute('data-visible') !== 'true';
       el.videoFrame.setAttribute('data-visible', String(visible));
@@ -341,6 +356,7 @@
           player.setMuted(store.muted);
           break;
         case 'v': el.videoToggle.click(); break;
+        case 'w': el.awakeToggle.click(); break;
         case 'arrowright': player.seekTo(player.currentTime() + 5); break;
         case 'arrowleft': player.seekTo(Math.max(0, player.currentTime() - 5)); break;
         default: return;
@@ -367,6 +383,7 @@
     el.shuffle.setAttribute('aria-pressed', String(state.shuffle));
     el.repeat.setAttribute('aria-pressed', String(state.repeat !== 'off'));
     el.repeat.textContent = state.repeat === 'one' ? 'Repeat 1' : 'Repeat';
+    el.awakeToggle.setAttribute('aria-pressed', String(state.keepAwake));
     el.mute.setAttribute('aria-pressed', String(state.muted));
     el.mute.textContent = state.muted || state.volume === 0 ? '🔇' : '🔊';
     if (document.activeElement !== el.volume) el.volume.value = state.volume;
@@ -479,11 +496,65 @@
 
     el.timeCurrent.textContent = utils.formatTime(current);
     el.seek.value = duration ? String(Math.round((current / duration) * 1000)) : '0';
+    updatePositionState(current, duration);
+  }
+
+  /* Feeds the lock-screen scrubber where the platform shows one. */
+  function updatePositionState(current, duration) {
+    if (!('mediaSession' in global.navigator) || !global.navigator.mediaSession.setPositionState) return;
+    if (!duration || current > duration) return;
+
+    try {
+      global.navigator.mediaSession.setPositionState({
+        duration: duration,
+        position: current,
+        playbackRate: 1
+      });
+    } catch (err) {
+      /* Position state is advisory; ignore rejections. */
+    }
   }
 
   function updatePlayButton(playing) {
     el.play.textContent = playing ? '⏸' : '▶';
     el.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  }
+
+  /* ---------- keeping the screen alive ---------- */
+
+  /*
+   * A locked screen suspends the embedded player, and nothing in a web page
+   * can resume it — background playback is YouTube's own paid feature. What a
+   * page may do is ask the OS not to dim and lock while a track is playing,
+   * which covers the usual case of the phone idling on a desk mid-album.
+   */
+  function holdScreenAwake() {
+    if (!store.keepAwake || wakeLock || !('wakeLock' in global.navigator)) return;
+
+    global.navigator.wakeLock.request('screen').then(function (lock) {
+      wakeLock = lock;
+      lock.addEventListener('release', function () { wakeLock = null; });
+    }).catch(function () {
+      /* Denied on a hidden page or an unsupported browser; playback is fine. */
+    });
+  }
+
+  function releaseScreen() {
+    if (!wakeLock) return;
+    var lock = wakeLock;
+    wakeLock = null;
+    lock.release().catch(function () {});
+  }
+
+  /* A wake lock is dropped whenever the tab hides, so take it again on return. */
+  function bindWakeLock() {
+    if (!('wakeLock' in global.navigator)) return;
+    el.awakeToggle.hidden = false;
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      if (player && player.state() === STATE.PLAYING) holdScreenAwake();
+    });
   }
 
   /* ---------- OS media keys ---------- */
@@ -504,6 +575,9 @@
       global.navigator.mediaSession.setActionHandler('pause', function () { player.pause(); });
       global.navigator.mediaSession.setActionHandler('nexttrack', function () { advance(1, false); });
       global.navigator.mediaSession.setActionHandler('previoustrack', function () { advance(-1, false); });
+      global.navigator.mediaSession.setActionHandler('seekto', function (details) {
+        if (details && typeof details.seekTime === 'number') player.seekTo(details.seekTime);
+      });
     } catch (err) {
       /* Media Session support varies; controls simply stay unavailable. */
     }

@@ -12,6 +12,7 @@
     this.repeat = 'off';
     this.volume = 80;
     this.muted = false;
+    this.keepAwake = true;
     this._shuffleOrder = [];
     this._listeners = [];
     this._load();
@@ -201,6 +202,11 @@
     this._emit();
   };
 
+  Store.prototype.setKeepAwake = function (on) {
+    this.keepAwake = !!on;
+    this._emit();
+  };
+
   /** Fisher-Yates over the current uids, keeping the playing track first. */
   Store.prototype._reshuffle = function () {
     if (!this.shuffle) { this._shuffleOrder = []; return; }
@@ -230,7 +236,8 @@
         shuffle: this.shuffle,
         repeat: this.repeat,
         volume: this.volume,
-        muted: this.muted
+        muted: this.muted,
+        keepAwake: this.keepAwake
       }));
     } catch (err) {
       /* Storage can be full or blocked; the queue still works in memory. */
@@ -254,6 +261,7 @@
     this.repeat = REPEAT_MODES.indexOf(saved.repeat) >= 0 ? saved.repeat : 'off';
     this.volume = typeof saved.volume === 'number' ? saved.volume : 80;
     this.muted = !!saved.muted;
+    this.keepAwake = saved.keepAwake !== false;
     if (this.shuffle) this._reshuffle();
   };
 

@@ -27,13 +27,39 @@ YouTube IFrame player needs a real origin.
 | Play a queued track | Click it in the queue |
 | Reorder the queue | Drag queue items |
 | Watch the video | Press **Video** in the header |
+| Stop the screen locking | Press **Keep awake** in the header (on by default) |
 
 Keyboard: `Space` play/pause · `K`/`L` previous/next · `←`/`→` seek 5s ·
-`S` shuffle · `R` repeat (off → all → one) · `M` mute · `V` video.
+`S` shuffle · `R` repeat (off → all → one) · `M` mute · `V` video · `W` keep awake.
 
 The queue, playback position in the list, volume, shuffle and repeat settings are
 saved to `localStorage`, so a reload picks up where you left off. OS media keys
 work through the Media Session API.
+
+## Playing with the screen off
+
+Short version: a locked phone stops the music, and no web page can change that.
+
+The player runs inside YouTube's own embed. When a phone locks or the browser
+goes to the background, the browser suspends that embed, and a page has no API
+to resume it — background playback is the feature YouTube reserves for Premium
+in their own app. Anything that forced it would be a deliberate circumvention of
+their terms, so this app does not try.
+
+What it does instead, on browsers that support the
+[Screen Wake Lock API](https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API)
+(Chrome, Edge, and Safari 16.4+):
+
+- **Keep awake** (header, on by default) holds a screen wake lock for as long as
+  a track is playing, so the phone does not dim and auto-lock mid-album. The
+  lock is released the moment you pause, and re-taken when you come back to the
+  tab, since browsers drop it whenever a page is hidden.
+- Media Session metadata and a position state are published, so the lock screen
+  and OS controls show the track and a working scrubber wherever the platform
+  keeps the session alive.
+
+If you press the power button yourself, playback still stops. For genuine
+background audio, YouTube Premium in the official app is the supported route.
 
 ## Optional: a YouTube Data API key
 
