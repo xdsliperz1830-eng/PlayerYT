@@ -32,16 +32,18 @@
 
   /**
    * Add a track. Returns the stored track, or the existing one when the same
-   * video is already queued (duplicates only clutter a music queue).
+   * video or file is already queued (duplicates only clutter a music queue).
    */
   Store.prototype.add = function (track) {
-    var existing = this.findByVideoId(track.videoId);
+    var existing = track.src ? this.findBySrc(track.src) : this.findByVideoId(track.videoId);
     if (existing) return existing;
 
     var entry = {
       uid: 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      videoId: track.videoId,
-      title: track.title || track.videoId,
+      kind: track.kind === 'audio' ? 'audio' : 'youtube',
+      videoId: track.videoId || null,
+      src: track.src || null,
+      title: track.title || track.videoId || 'Untitled',
       author: track.author || '',
       duration: track.duration || 0
     };
@@ -54,7 +56,8 @@
   Store.prototype.addMany = function (list) {
     var added = [];
     for (var i = 0; i < list.length; i++) {
-      if (this.findByVideoId(list[i].videoId)) continue;
+      var duplicate = list[i].src ? this.findBySrc(list[i].src) : this.findByVideoId(list[i].videoId);
+      if (duplicate) continue;
       added.push(this.add(list[i]));
     }
     return added;
@@ -120,8 +123,17 @@
   };
 
   Store.prototype.findByVideoId = function (videoId) {
+    if (!videoId) return null;
     for (var i = 0; i < this.tracks.length; i++) {
       if (this.tracks[i].videoId === videoId) return this.tracks[i];
+    }
+    return null;
+  };
+
+  Store.prototype.findBySrc = function (src) {
+    if (!src) return null;
+    for (var i = 0; i < this.tracks.length; i++) {
+      if (this.tracks[i].src === src) return this.tracks[i];
     }
     return null;
   };
@@ -253,9 +265,16 @@
     }
     if (!saved || !Array.isArray(saved.tracks)) return;
 
-    this.tracks = saved.tracks.filter(function (track) {
-      return track && typeof track.videoId === 'string' && typeof track.uid === 'string';
-    });
+    this.tracks = saved.tracks
+      .filter(function (track) {
+        if (!track || typeof track.uid !== 'string') return false;
+        return typeof track.videoId === 'string' || typeof track.src === 'string';
+      })
+      .map(function (track) {
+        // Queues saved before file support existed are all YouTube tracks.
+        track.kind = track.kind === 'audio' ? 'audio' : 'youtube';
+        return track;
+      });
     this.currentUid = this.get(saved.currentUid) ? saved.currentUid : null;
     this.shuffle = !!saved.shuffle;
     this.repeat = REPEAT_MODES.indexOf(saved.repeat) >= 0 ? saved.repeat : 'off';

@@ -33,12 +33,17 @@
         <button type="submit" id="add-button">Add</button>
       </form>
 
+      <input id="file-input" type="file" accept="audio/*" multiple hidden />
+
       <div class="topbar-actions">
         <button type="button" id="video-toggle" class="icon-button" title="Show/hide video (V)" aria-pressed="false">
           Video
         </button>
         <button type="button" id="awake-toggle" class="icon-button" title="Stop the screen locking while a track plays (W)" aria-pressed="false" hidden>
           Keep awake
+        </button>
+        <button type="button" id="file-button" class="icon-button" title="Add audio files from this device">
+          Files
         </button>
         <button type="button" id="settings-toggle" class="icon-button" title="Search settings">
           Settings
@@ -68,7 +73,9 @@
           </div>
 
           <div class="now-playing" id="now-playing">
-            <img id="np-art" class="np-art" alt="" aria-hidden="true" />
+            <span class="np-cover" id="np-cover" data-kind="youtube" aria-hidden="true">
+              <img id="np-art" class="np-art" alt="" />
+            </span>
             <div class="np-meta">
               <p class="np-label">Now playing</p>
               <h2 id="np-title">Nothing queued yet</h2>
@@ -106,8 +113,9 @@
         </div>
         <ol id="queue-list" class="queue-list" aria-live="polite"></ol>
         <p id="queue-empty" class="queue-empty">
-          Your queue is empty. Paste a YouTube link above, or add a whole playlist link
-          to import up to 50 tracks.
+          Your queue is empty. Paste a YouTube link, add a playlist link to import up to
+          50 tracks, or press <strong>Files</strong> to queue audio from this device —
+          those keep playing when the screen locks.
         </p>
       </aside>
     </main>
@@ -120,7 +128,7 @@
 
   <template id="queue-item-template">
     <li class="queue-item" draggable="true">
-      <img class="qi-art" alt="" />
+      <span class="qi-cover" data-kind="youtube" aria-hidden="true"><img class="qi-art" alt="" /></span>
       <button type="button" class="qi-main">
         <span class="qi-title"></span>
         <span class="qi-author"></span>
@@ -133,6 +141,8 @@
   <script src="src/utils.js"></script>
   <script src="src/store.js"></script>
   <script src="src/youtube.js"></script>
+  <script src="src/library.js"></script>
+  <script src="src/audio.js"></script>
   <script src="src/app.js"></script>
 </body>
 </html>

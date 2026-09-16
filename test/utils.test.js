@@ -11,7 +11,7 @@ sandbox.window = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'utils.js'), 'utf8'), sandbox);
 
-const { parseInput, formatTime, parseIsoDuration } = sandbox.PYT.utils;
+const { parseInput, formatTime, parseIsoDuration, classifyInput, titleFromName } = sandbox.PYT.utils;
 
 const linkCases = [
   ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'dQw4w9WgXcQ', null],
@@ -54,5 +54,25 @@ assert.strictEqual(parseIsoDuration('PT3M14S'), 194);
 assert.strictEqual(parseIsoDuration('PT1H2M3S'), 3723);
 assert.strictEqual(parseIsoDuration('PT45S'), 45);
 assert.strictEqual(parseIsoDuration('nonsense'), 0);
+
+// classifyInput routes the add box between YouTube, audio files and search
+assert.strictEqual(classifyInput('').kind, 'empty');
+assert.strictEqual(classifyInput('lofi beats').kind, 'search');
+assert.strictEqual(classifyInput('https://www.youtube.com/watch?v=dQw4w9WgXcQ').kind, 'youtube');
+assert.strictEqual(classifyInput('dQw4w9WgXcQ').youtube.videoId, 'dQw4w9WgXcQ');
+
+['https://example.com/song.mp3', 'https://cdn.example.com/a/b.flac?token=1',
+ 'https://example.com/set.m4a#t=10', 'https://example.com/x.opus'].forEach((link) => {
+  const result = classifyInput(link);
+  assert.strictEqual(result.kind, 'audio', `expected audio for ${link}`);
+  assert.ok(result.src.startsWith('https://'), 'audio src keeps its url');
+});
+
+assert.strictEqual(classifyInput('https://example.com/page').kind, 'unknown-link');
+assert.strictEqual(classifyInput('https://vimeo.com/123').kind, 'unknown-link');
+
+assert.strictEqual(titleFromName('01 - Rhodes Groove.mp3'), '01 - Rhodes Groove');
+assert.strictEqual(titleFromName('no-extension'), 'no-extension');
+assert.strictEqual(titleFromName(''), 'Untitled');
 
 console.log('utils: all assertions passed');

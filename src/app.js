@@ -10,6 +10,7 @@
   var el = {};
   var store = new global.PYT.Store();
   var player = null;
+  var audio = null;
   var seeking = false;
   var ticker = null;
   var statusTimer = null;
@@ -28,15 +29,37 @@
 
     store.subscribe(render);
 
+    // A file track restored from a previous session needs its blob back.
+    var restored = store.current();
+    if (restored && isFileTrack(restored)) loadFileTrack(restored, false);
+
     player = new youtube.Player('yt-player', {
       onReady: onPlayerReady,
       onStateChange: onPlayerStateChange,
       onError: onPlayerError
     });
 
+    audio = new global.PYT.AudioEngine({
+      onStateChange: onPlayerStateChange,
+      onError: onAudioError,
+      onDuration: onAudioDuration
+    });
+    audio.setVolume(store.volume);
+    audio.setMuted(store.muted);
+
     player.ready.catch(function (err) {
       setStatus(err.message, true);
     });
+  }
+
+  /* Which engine owns playback right now: YouTube's iframe, or the audio element. */
+  function engine(track) {
+    var current = track || store.current();
+    return current && current.kind === 'audio' ? audio : player;
+  }
+
+  function isFileTrack(track) {
+    return !!track && track.kind === 'audio';
   }
 
   function cacheElements() {
@@ -46,7 +69,7 @@
       'now-playing', 'np-art', 'np-title', 'np-author', 'seek', 'time-current',
       'time-total', 'shuffle', 'prev', 'play', 'next', 'repeat', 'mute', 'volume',
       'queue-list', 'queue-count', 'queue-empty', 'clear-queue', 'status',
-      'queue-item-template', 'awake-toggle'
+      'queue-item-template', 'awake-toggle', 'file-input', 'file-button', 'np-cover'
     ].forEach(function (id) {
       el[camel(id)] = document.getElementById(id);
     });
@@ -62,11 +85,12 @@
     player.setVolume(store.volume);
     player.setMuted(store.muted);
     var current = store.current();
-    if (current) player.load(current.videoId, false);
+    if (current && !isFileTrack(current)) player.load(current.videoId, false);
     setStatus(store.tracks.length ? 'Queue restored — press play' : 'Ready');
   }
 
-  function onPlayerStateChange(state) {
+  function onPlayerStateChange(state, source) {
+    if (source && source !== engine()) return;
     updatePlayButton(state === STATE.PLAYING || state === STATE.BUFFERING);
 
     if (state === STATE.PLAYING) {
@@ -90,9 +114,24 @@
     advance(1, true);
   }
 
+  function onAudioError() {
+    var current = store.current();
+    if (!current || !isFileTrack(current)) return;
+    setStatus('Could not play ' + current.title + ' — the file may have moved or be an unsupported format', true);
+    advance(1, true);
+  }
+
+  function onAudioDuration(seconds) {
+    var current = store.current();
+    if (current && isFileTrack(current) && seconds) {
+      store.update(current.uid, { duration: Math.round(seconds) });
+    }
+  }
+
   /* Once playback starts the player knows the real title; keep the queue honest. */
   function captureLiveMetadata() {
     var current = store.current();
+    if (!current || isFileTrack(current)) return;
     var data = player.videoData();
     if (!current || !data || data.video_id !== current.videoId) return;
 
@@ -108,9 +147,39 @@
   function playTrack(uid, autoplay) {
     var track = store.get(uid);
     if (!track) return;
+
+    // Silence whichever engine is not about to play.
+    (isFileTrack(track) ? player : audio).pause();
     store.setCurrent(uid);
-    player.load(track.videoId, autoplay !== false);
-    updateMediaSession();
+
+    if (!isFileTrack(track)) {
+      player.load(track.videoId, autoplay !== false);
+      updateMediaSession();
+      return;
+    }
+
+    loadFileTrack(track, autoplay !== false);
+  }
+
+  /* Local files live in IndexedDB; remote ones are just a URL. */
+  function loadFileTrack(track, autoplay) {
+    if (track.src.indexOf('idb:') !== 0) {
+      audio.load(track.src, autoplay);
+      updateMediaSession();
+      return;
+    }
+
+    global.PYT.library.get(track.src.slice(4))
+      .then(function (blob) {
+        if (!blob) throw new Error('missing');
+        if (store.currentUid !== track.uid) return;
+        audio.load(blob, autoplay);
+        updateMediaSession();
+      })
+      .catch(function () {
+        setStatus(track.title + ' is no longer stored on this device — removing it', true);
+        store.remove(track.uid);
+      });
   }
 
   function togglePlay() {
@@ -118,19 +187,25 @@
       setStatus('Add something to the queue first');
       return;
     }
-    if (!store.current()) {
+    var current = store.current();
+    if (!current) {
       playTrack(store.tracks[0].uid, true);
       return;
     }
-    var state = player.state();
-    if (state === STATE.PLAYING || state === STATE.BUFFERING) player.pause();
-    else player.play();
+    if (isFileTrack(current) && !audio.element.currentSrc && !audio.element.src) {
+      loadFileTrack(current, true);
+      return;
+    }
+    var active = engine();
+    var state = active.state();
+    if (state === STATE.PLAYING || state === STATE.BUFFERING) active.pause();
+    else active.play();
   }
 
   function advance(direction, auto) {
     // Restart the track instead of stepping back when we're well into it.
-    if (direction < 0 && player.currentTime() > 3) {
-      player.seekTo(0);
+    if (direction < 0 && engine().currentTime() > 3) {
+      engine().seekTo(0);
       return;
     }
 
@@ -141,8 +216,8 @@
       return;
     }
     if (auto && uid === store.currentUid) {
-      player.seekTo(0);
-      player.play();
+      engine().seekTo(0);
+      engine().play();
       return;
     }
     playTrack(uid, true);
@@ -172,14 +247,67 @@
   }
 
   function handleAdd(value) {
-    var parsed = utils.parseInput(value);
+    var input = utils.classifyInput(value);
 
-    if (parsed && parsed.playlistId) return addPlaylist(parsed);
-    if (parsed && parsed.videoId) return addVideo(parsed.videoId);
-    if (/^https?:\/\//i.test(value) || value.indexOf('youtu') === 0) {
-      return Promise.reject(new Error('That link does not contain a YouTube video or playlist id'));
+    if (input.kind === 'youtube') {
+      if (input.youtube.playlistId) return addPlaylist(input.youtube);
+      return addVideo(input.youtube.videoId);
     }
-    return addBySearch(value);
+    if (input.kind === 'audio') return addAudioUrl(input.src);
+    if (input.kind === 'unknown-link') {
+      return Promise.reject(new Error('That link is neither a YouTube video nor an audio file'));
+    }
+    return addBySearch(input.query);
+  }
+
+  /* A direct link to an audio file: plays through the audio element. */
+  function addAudioUrl(src) {
+    var existing = store.findBySrc(src);
+    if (existing) return Promise.resolve('Already in the queue: ' + existing.title);
+
+    var name = src.split('/').pop().split('?')[0];
+    var track = store.add({
+      kind: 'audio',
+      src: src,
+      title: utils.titleFromName(decodeURIComponent(name)),
+      author: 'Audio file'
+    });
+
+    if (!store.currentUid) playTrack(track.uid, false);
+    return Promise.resolve('Added ' + track.title + ' — plays with the screen locked');
+  }
+
+  /* Files picked from the device, stored so the queue survives a reload. */
+  function addFiles(files) {
+    var list = Array.prototype.slice.call(files).filter(function (file) {
+      return /^audio\//.test(file.type) || /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(file.name);
+    });
+
+    if (!list.length) {
+      setStatus('Those files are not audio the browser can play', true);
+      return;
+    }
+
+    setStatus('Storing ' + list.length + ' file' + (list.length === 1 ? '' : 's') + '…');
+
+    Promise.all(list.map(function (file) {
+      return global.PYT.library.put(file).then(function (key) {
+        return store.add({
+          kind: 'audio',
+          src: 'idb:' + key,
+          title: utils.titleFromName(file.name),
+          author: 'On this device'
+        });
+      });
+    }))
+      .then(function (added) {
+        if (!store.currentUid && added.length) playTrack(added[0].uid, false);
+        setStatus('Added ' + added.length + ' file' + (added.length === 1 ? '' : 's') +
+          ' — these keep playing with the screen locked');
+      })
+      .catch(function (err) {
+        setStatus(err.message || 'Could not store those files', true);
+      });
   }
 
   function addVideo(videoId) {
@@ -261,27 +389,28 @@
 
     el.mute.addEventListener('click', function () {
       store.setMuted(!store.muted);
-      player.setMuted(store.muted);
+      applyMuted();
     });
 
     el.volume.addEventListener('input', function () {
       store.setVolume(el.volume.value);
       player.setVolume(store.volume);
+      audio.setVolume(store.volume);
       if (store.muted && store.volume > 0) {
         store.setMuted(false);
-        player.setMuted(false);
+        applyMuted();
       }
     });
 
     el.seek.addEventListener('pointerdown', function () { seeking = true; });
     el.seek.addEventListener('input', function () {
-      var duration = player.duration();
+      var duration = engine().duration();
       el.timeCurrent.textContent = utils.formatTime(duration * (el.seek.value / 1000));
     });
     el.seek.addEventListener('change', function () {
-      var duration = player.duration();
+      var duration = engine().duration();
       seeking = false;
-      if (duration) player.seekTo(duration * (el.seek.value / 1000));
+      if (duration) engine().seekTo(duration * (el.seek.value / 1000));
     });
 
     el.awakeToggle.addEventListener('click', function () {
@@ -295,11 +424,23 @@
       }
     });
 
+    el.fileButton.addEventListener('click', function () { el.fileInput.click(); });
+
+    el.fileInput.addEventListener('change', function () {
+      if (el.fileInput.files && el.fileInput.files.length) addFiles(el.fileInput.files);
+      el.fileInput.value = '';
+    });
+
     el.videoToggle.addEventListener('click', function () {
       var visible = el.videoFrame.getAttribute('data-visible') !== 'true';
       el.videoFrame.setAttribute('data-visible', String(visible));
       el.videoToggle.setAttribute('aria-pressed', String(visible));
     });
+  }
+
+  function applyMuted() {
+    player.setMuted(store.muted);
+    audio.setMuted(store.muted);
   }
 
   function bindSettings() {
@@ -353,12 +494,12 @@
         case 'r': store.cycleRepeat(); break;
         case 'm':
           store.setMuted(!store.muted);
-          player.setMuted(store.muted);
+          applyMuted();
           break;
         case 'v': el.videoToggle.click(); break;
         case 'w': el.awakeToggle.click(); break;
-        case 'arrowright': player.seekTo(player.currentTime() + 5); break;
-        case 'arrowleft': player.seekTo(Math.max(0, player.currentTime() - 5)); break;
+        case 'arrowright': engine().seekTo(engine().currentTime() + 5); break;
+        case 'arrowleft': engine().seekTo(Math.max(0, engine().currentTime() - 5)); break;
         default: return;
       }
     });
@@ -369,8 +510,10 @@
   function bindQueue() {
     el.clearQueue.addEventListener('click', function () {
       if (!store.tracks.length) return;
+      store.tracks.forEach(forgetFile);
       store.clear();
       player.stop();
+      audio.stop();
       updatePlayButton(false);
       setStatus('Queue cleared');
     });
@@ -395,12 +538,15 @@
       el.npTitle.textContent = state.tracks.length ? 'Ready when you are' : 'Nothing queued yet';
       el.npAuthor.textContent = state.tracks.length ? 'Press play to start the queue' : 'Add a track to get started';
       el.npArt.removeAttribute('src');
+      el.npCover.setAttribute('data-kind', 'youtube');
       el.timeTotal.textContent = '0:00';
       return;
     }
     el.npTitle.textContent = current.title;
     el.npAuthor.textContent = current.author || '';
-    el.npArt.src = utils.thumbnailUrl(current.videoId);
+    el.npCover.setAttribute('data-kind', current.kind);
+    if (isFileTrack(current)) el.npArt.removeAttribute('src');
+    else el.npArt.src = utils.thumbnailUrl(current.videoId);
     if (current.duration) el.timeTotal.textContent = utils.formatTime(current.duration);
   }
 
@@ -419,9 +565,8 @@
     node.dataset.uid = track.uid;
     node.dataset.active = String(isActive);
 
-    var art = node.querySelector('.qi-art');
-    art.src = utils.thumbnailUrl(track.videoId);
-    art.alt = '';
+    node.querySelector('.qi-cover').setAttribute('data-kind', track.kind);
+    if (!isFileTrack(track)) node.querySelector('.qi-art').src = utils.thumbnailUrl(track.videoId);
 
     node.querySelector('.qi-title').textContent = track.title;
     node.querySelector('.qi-author').textContent = track.author || '';
@@ -433,16 +578,25 @@
 
     node.querySelector('.qi-remove').addEventListener('click', function () {
       var wasCurrent = store.currentUid === track.uid;
+      var wasPlaying = engine(track).state() === STATE.PLAYING;
+      forgetFile(track);
       store.remove(track.uid);
       if (wasCurrent) {
         var next = store.current();
-        if (next) playTrack(next.uid, player.state() === STATE.PLAYING);
-        else { player.stop(); updatePlayButton(false); }
+        if (next) playTrack(next.uid, wasPlaying);
+        else { player.stop(); audio.stop(); updatePlayButton(false); }
       }
     });
 
     addDragHandlers(node);
     return node;
+  }
+
+  /* Dropping a queued file also drops the blob backing it. */
+  function forgetFile(track) {
+    if (isFileTrack(track) && track.src.indexOf('idb:') === 0) {
+      global.PYT.library.remove(track.src.slice(4));
+    }
   }
 
   function addDragHandlers(node) {
@@ -488,8 +642,9 @@
   }
 
   function updateProgress() {
-    var duration = player.duration();
-    var current = player.currentTime();
+    var active = engine();
+    var duration = active.duration();
+    var current = active.currentTime();
 
     el.timeTotal.textContent = utils.formatTime(duration);
     if (seeking) return;
@@ -530,6 +685,8 @@
    */
   function holdScreenAwake() {
     if (!store.keepAwake || wakeLock || !('wakeLock' in global.navigator)) return;
+    // File tracks survive a locked screen on their own; no need to burn battery.
+    if (isFileTrack(store.current())) return;
 
     global.navigator.wakeLock.request('screen').then(function (lock) {
       wakeLock = lock;
@@ -553,7 +710,7 @@
 
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState !== 'visible') return;
-      if (player && player.state() === STATE.PLAYING) holdScreenAwake();
+      if (engine().state() === STATE.PLAYING) holdScreenAwake();
     });
   }
 
@@ -567,16 +724,18 @@
     try {
       global.navigator.mediaSession.metadata = new global.MediaMetadata({
         title: current.title,
-        artist: current.author || 'YouTube',
+        artist: current.author || (isFileTrack(current) ? 'Audio file' : 'YouTube'),
         album: 'PlayerYT',
-        artwork: [{ src: utils.thumbnailUrl(current.videoId), sizes: '320x180', type: 'image/jpeg' }]
+        artwork: isFileTrack(current)
+          ? []
+          : [{ src: utils.thumbnailUrl(current.videoId), sizes: '320x180', type: 'image/jpeg' }]
       });
-      global.navigator.mediaSession.setActionHandler('play', function () { player.play(); });
-      global.navigator.mediaSession.setActionHandler('pause', function () { player.pause(); });
+      global.navigator.mediaSession.setActionHandler('play', function () { engine().play(); });
+      global.navigator.mediaSession.setActionHandler('pause', function () { engine().pause(); });
       global.navigator.mediaSession.setActionHandler('nexttrack', function () { advance(1, false); });
       global.navigator.mediaSession.setActionHandler('previoustrack', function () { advance(-1, false); });
       global.navigator.mediaSession.setActionHandler('seekto', function (details) {
-        if (details && typeof details.seekTime === 'number') player.seekTo(details.seekTime);
+        if (details && typeof details.seekTime === 'number') engine().seekTo(details.seekTime);
       });
     } catch (err) {
       /* Media Session support varies; controls simply stay unavailable. */

@@ -77,6 +77,33 @@
     return Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
   }
 
+  var AUDIO_EXTENSION = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|weba|webm)(\?|#|$)/i;
+
+  /**
+   * Work out what the add box was given: a YouTube link or id, a playable
+   * audio URL, or plain words to search for.
+   */
+  function classifyInput(raw) {
+    var text = String(raw || '').trim();
+    if (!text) return { kind: 'empty' };
+
+    var youtube = parseInput(text);
+    if (youtube) return { kind: 'youtube', youtube: youtube };
+
+    if (/^https?:\/\//i.test(text)) {
+      var url = toUrl(text);
+      if (url && AUDIO_EXTENSION.test(url.pathname)) return { kind: 'audio', src: url.href };
+      return { kind: 'unknown-link', src: text };
+    }
+
+    return { kind: 'search', query: text };
+  }
+
+  /** "01 - Rhodes Groove.mp3" -> "01 - Rhodes Groove" */
+  function titleFromName(name) {
+    return String(name || '').replace(/\.[a-z0-9]{1,5}$/i, '').trim() || 'Untitled';
+  }
+
   function thumbnailUrl(videoId) {
     return 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg';
   }
@@ -84,6 +111,8 @@
   global.PYT = global.PYT || {};
   global.PYT.utils = {
     parseInput: parseInput,
+    classifyInput: classifyInput,
+    titleFromName: titleFromName,
     formatTime: formatTime,
     parseIsoDuration: parseIsoDuration,
     thumbnailUrl: thumbnailUrl,
