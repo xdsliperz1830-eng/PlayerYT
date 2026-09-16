@@ -15,6 +15,7 @@
   var ticker = null;
   var statusTimer = null;
   var wakeLock = null;
+  var prefetched = { uid: null, blob: null };
 
   document.addEventListener('DOMContentLoaded', init);
 
@@ -69,7 +70,8 @@
       'now-playing', 'np-art', 'np-title', 'np-author', 'seek', 'time-current',
       'time-total', 'shuffle', 'prev', 'play', 'next', 'repeat', 'mute', 'volume',
       'queue-list', 'queue-count', 'queue-empty', 'clear-queue', 'status',
-      'queue-item-template', 'awake-toggle', 'file-input', 'file-button', 'np-cover'
+      'queue-item-template', 'awake-toggle', 'file-input', 'file-button', 'np-cover',
+      'np-source'
     ].forEach(function (id) {
       el[camel(id)] = document.getElementById(id);
     });
@@ -148,8 +150,11 @@
     var track = store.get(uid);
     if (!track) return;
 
-    // Silence whichever engine is not about to play.
-    (isFileTrack(track) ? player : audio).pause();
+    // Hand over cleanly: stopVideo releases the iframe's media element, so a
+    // dormant YouTube player cannot hold the phone's audio focus while a file
+    // track is the one that needs to survive a locked screen.
+    if (isFileTrack(track)) player.stop();
+    else audio.pause();
     store.setCurrent(uid);
 
     if (!isFileTrack(track)) {
@@ -161,25 +166,63 @@
     loadFileTrack(track, autoplay !== false);
   }
 
-  /* Local files live in IndexedDB; remote ones are just a URL. */
+  /*
+   * Local files live in IndexedDB; remote ones are just a URL.
+   *
+   * The synchronous path matters more than it looks: a phone only lets a track
+   * that ends behind a locked screen start the next one if playback resumes
+   * within the same turn as the `ended` event. Going away to IndexedDB first
+   * loses that, and the queue dies at the first track boundary — so the next
+   * file is fetched while the current one is still playing.
+   */
   function loadFileTrack(track, autoplay) {
     if (track.src.indexOf('idb:') !== 0) {
       audio.load(track.src, autoplay);
-      updateMediaSession();
+      afterFileLoad(track);
+      return;
+    }
+
+    if (prefetched.uid === track.uid && prefetched.blob) {
+      var blob = prefetched.blob;
+      prefetched = { uid: null, blob: null };
+      audio.load(blob, autoplay);
+      afterFileLoad(track);
       return;
     }
 
     global.PYT.library.get(track.src.slice(4))
-      .then(function (blob) {
-        if (!blob) throw new Error('missing');
+      .then(function (stored) {
+        if (!stored) throw new Error('missing');
         if (store.currentUid !== track.uid) return;
-        audio.load(blob, autoplay);
-        updateMediaSession();
+        audio.load(stored, autoplay);
+        afterFileLoad(track);
       })
       .catch(function () {
         setStatus(track.title + ' is no longer stored on this device — removing it', true);
+        forgetFile(track);
         store.remove(track.uid);
       });
+  }
+
+  function afterFileLoad(track) {
+    updateMediaSession();
+    prefetchNext(track);
+  }
+
+  /* Pull the next file off IndexedDB early so the handover can be synchronous. */
+  function prefetchNext(current) {
+    var nextUid = store.nextUid(true);
+    if (!nextUid || nextUid === current.uid) return;
+
+    var next = store.get(nextUid);
+    if (!next || !isFileTrack(next) || next.src.indexOf('idb:') !== 0) return;
+    if (prefetched.uid === nextUid) return;
+
+    global.PYT.library.get(next.src.slice(4))
+      .then(function (blob) {
+        if (blob) prefetched = { uid: nextUid, blob: blob };
+      })
+      .catch(function () { /* the handover falls back to the async path */ });
   }
 
   function togglePlay() {
@@ -539,12 +582,18 @@
       el.npAuthor.textContent = state.tracks.length ? 'Press play to start the queue' : 'Add a track to get started';
       el.npArt.removeAttribute('src');
       el.npCover.setAttribute('data-kind', 'youtube');
+      el.npSource.hidden = true;
       el.timeTotal.textContent = '0:00';
       return;
     }
     el.npTitle.textContent = current.title;
     el.npAuthor.textContent = current.author || '';
     el.npCover.setAttribute('data-kind', current.kind);
+    el.npSource.hidden = false;
+    el.npSource.setAttribute('data-kind', current.kind);
+    el.npSource.textContent = isFileTrack(current)
+      ? 'Audio file · keeps playing when the screen locks'
+      : 'YouTube · pauses when the screen locks';
     if (isFileTrack(current)) el.npArt.removeAttribute('src');
     else el.npArt.src = utils.thumbnailUrl(current.videoId);
     if (current.duration) el.timeTotal.textContent = utils.formatTime(current.duration);
@@ -673,6 +722,10 @@
   function updatePlayButton(playing) {
     el.play.textContent = playing ? '⏸' : '▶';
     el.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+
+    if ('mediaSession' in global.navigator) {
+      global.navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    }
   }
 
   /* ---------- keeping the screen alive ---------- */

@@ -16,8 +16,9 @@
     this._objectUrl = null;
 
     var element = new global.Audio();
-    element.preload = 'metadata';
-    element.crossOrigin = 'anonymous';
+    element.preload = 'auto';
+    // No crossOrigin: this element never feeds a canvas or analyser, and asking
+    // for CORS makes plain audio URLs fail on hosts that send no CORS headers.
     // In the document rather than detached: browsers treat an attached element
     // as page media, which is what keeps it alive behind a locked screen.
     element.setAttribute('data-role', 'file-player');

@@ -45,6 +45,8 @@ work through the Media Session API.
 
 It depends on the source, and the difference is not something the app chooses.
 
+The badge under the track title always says which case you are in.
+
 **File tracks keep playing.** They run through an `<audio>` element, which is the
 one media surface a mobile browser keeps alive when the screen locks. Lock the
 phone, put it in a pocket, and the queue carries on with lock-screen controls
